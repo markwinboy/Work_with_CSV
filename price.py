@@ -57,15 +57,35 @@ def create_new_date(name):
         df = df.astype(object).replace({'—': np.nan, '-': np.nan})
         df.iloc[:, 4:] = df.iloc[:, 4:].apply(pd.to_numeric)
         df_main=df.copy()
-        df["id_zk"] = [dict_ZK.get(i) for i in df["Холдинг"]]
-        df["id_house"] = [dict_H.get(i) for i in df["Название"]]
-        print(df)
-        df_house = df[["id_house","id_zk","Название","Холдинг","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
-                  "Количество проданных, кв.м."]].sort_values(["id_house","id_zk"])
-        grouped=df_house.copy()
-        print(grouped)
-        df_ZK = df[["id_zk","Холдинг","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
-                  "Количество проданных, кв.м."]]
+        create_id_col_table(["id_house","Название"])
+        create_id_col_table(["id_zk","Холдинг"])
+        print(df_main)
+        df1 = df_main[["id_house","Название","id_zk","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
+                       "Количество проданных, кв.м."]]
+        df2 = df_main[["id_zk","Холдинг","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
+                       "Количество проданных, кв.м."]]
+        df1 = df1.groupby("Название").agg({
+            "id_house":"first",
+            "id_zk":"first",
+            "Площадь, кв.м.": "sum",
+            "Средневз. стоимость квартиры, руб.": "sum",
+            "Количество проданных, кв.м.": "sum"
+        }).reset_index().sort_values(["id_house","id_zk"])
+        df2 = df2.groupby("Холдинг").agg({
+            "id_zk":"first",
+            "Площадь, кв.м.": "sum",
+            "Средневз. стоимость квартиры, руб.": "sum",
+            "Количество проданных, кв.м.": "sum"
+        }).reset_index().sort_values("id_zk")
+        df1["Средневз. цена, руб."]=df1["Средневз. стоимость квартиры, руб."]/df1["Площадь, кв.м."]
+        df2["Средневз. цена, руб."]=df2["Средневз. стоимость квартиры, руб."]/df2["Площадь, кв.м."]
+
+        # df_house = df[["id_house","id_zk","Название","Холдинг","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
+        #           "Количество проданных, кв.м."]].sort_values(["id_house","id_zk"])
+        # grouped=df_house.copy()
+        # print(grouped)
+        # df_ZK = df[["id_zk","Холдинг","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
+        #           "Количество проданных, кв.м."]]
         # df2=df2.astype(object).replace({'—': np.nan, '-': np.nan})
         # df1 = df1.astype(object).replace({'—': np.nan, '-': np.nan})
         # df1.iloc[:, 2:] = df1.iloc[:, 2:].apply(pd.to_numeric)
@@ -73,18 +93,9 @@ def create_new_date(name):
         # for index,row in df.iterrows():
         #     print(df["id_ZK"].iloc[index])
         #     df["id_ZK"].iloc[index]=dict_ZK.get(row[2])
-        df_ZK = df_ZK.groupby("Холдинг").agg({
-            "Площадь, кв.м.":"sum",
-            "Средневз. стоимость квартиры, руб.":"sum",
-            "Количество проданных, кв.м.":"sum"
-        }).reset_index()
-        df_house = df_house.groupby("Название").agg({
-            "Площадь, кв.м.":"sum",
-            "Средневз. стоимость квартиры, руб.":"sum",
-            "Количество проданных, кв.м.":"sum"
-        }).reset_index()
-        df_house.sort_values("Название")
-        # grouped=df.copy()
+        df1.to_csv("Название" + name, index=False, sep=';', encoding='cp1251')
+        df2.to_csv("Холдинг" + name, index=False, sep=';', encoding='cp1251')
+        grouped=df.copy()
         print(grouped)
     return grouped
 
@@ -98,8 +109,7 @@ def create_id_col_table(lst_col):
             dic[i] = count
             count += 1
     df_main[lst_col[0]] = [dic.get(i) for i in df_main[lst_col[-1]]]
-    df = df_main[["id_house", "id_zk", "Название", "Холдинг", "Средневз. стоимость квартиры, руб.", "Площадь, кв.м.",
-                   "Количество проданных, кв.м."]].sort_values(["id_house", "id_zk"])
+
 # Проверка на
 def check_columns(df):
     global df_main
@@ -224,16 +234,16 @@ def pars_folder_csv(name):
                 check_columns(df1)
             elif indicate == 1:
                 df1.to_csv(name, index=False, sep=';', encoding='cp1251')
-            elif indicate==2:
-                df1.to_csv("Название"+name, index=False, sep=';', encoding='cp1251')
+            # elif indicate==2:
+            #     df1.to_csv("Название"+name, index=False, sep=';', encoding='cp1251')
         if indicate == 0:
             average_columns()
             write_to_excel(df_main, "База по ценам Декарт.xlsx")
     except FileNotFoundError:
         print("Указан несуществующий путь или не найден файл База по ценам Декарт.xlsx")
-    except KeyError:
-        print("Возможно файл не соответствует стандарту")
-        print("Проверьте, что столбцы разделяются ';', а столбец имеет такой формат 'Цена за кв.м., руб./кв.м.'")
+    # except KeyError:
+    #     print("Возможно файл не соответствует стандарту")
+    #     print("Проверьте, что столбцы разделяются ';', а столбец имеет такой формат 'Цена за кв.м., руб./кв.м.'")
 
 
 # Замена значений NaN на средние значения
