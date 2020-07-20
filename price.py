@@ -57,21 +57,20 @@ def create_new_date(name):
         df = df.astype(object).replace({'—': np.nan, '-': np.nan})
         df.iloc[:, 4:] = df.iloc[:, 4:].apply(pd.to_numeric)
         df_main=df.copy()
-        create_id_col_table(["id_house","Название"])
-        create_id_col_table(["id_zk","Холдинг"])
+        create_id_col_table(["id_zk","Название"])
         print(df_main)
-        df1 = df_main[["id_house","Название","id_zk","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
+        df1 = df_main[["id","Название","id_zk","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
                        "Количество проданных, кв.м."]]
-        df2 = df_main[["id_zk","Холдинг","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
+        df2 = df_main[["id_zk","Название","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
                        "Количество проданных, кв.м."]]
-        df1 = df1.groupby("Название").agg({
-            "id_house":"first",
+        df1 = df1.groupby("id").agg({
+            "Название":"first",
             "id_zk":"first",
             "Площадь, кв.м.": "sum",
             "Средневз. стоимость квартиры, руб.": "sum",
             "Количество проданных, кв.м.": "sum"
-        }).reset_index().sort_values(["id_house","id_zk"])
-        df2 = df2.groupby("Холдинг").agg({
+        }).reset_index().sort_values(["id","id_zk"])
+        df2 = df2.groupby("Название").agg({
             "id_zk":"first",
             "Площадь, кв.м.": "sum",
             "Средневз. стоимость квартиры, руб.": "sum",
@@ -93,13 +92,14 @@ def create_new_date(name):
         # for index,row in df.iterrows():
         #     print(df["id_ZK"].iloc[index])
         #     df["id_ZK"].iloc[index]=dict_ZK.get(row[2])
-        df1.to_csv("Название" + name, index=False, sep=';', encoding='cp1251')
-        df2.to_csv("Холдинг" + name, index=False, sep=';', encoding='cp1251')
+        df1.to_csv("Дом" + name, index=False, sep=';', encoding='cp1251')
+        df2.to_csv("ЖК" + name, index=False, sep=';', encoding='cp1251')
         grouped=df.copy()
         print(grouped)
     return grouped
 
-
+def create_bd_id():
+    pass
 def create_id_col_table(lst_col):
     global df_main
     dic = {}
