@@ -21,10 +21,10 @@ lst_group_columns = ["Средневз. стоимость квартиры, р�
 dict_id_zk = {}
 try:
     database = pd.read_csv("bd.csv", sep=';', encoding='cp1251')
-    database.groupby("Название").agg({
+    db = database.groupby("Название").agg({
         "id_zk":"first"
     }).reset_index().sort_values(["id_zk"])
-    for index,row in database.iterrows():
+    for index,row in db.iterrows():
         if row["Название"] not in dict_id_zk:
             dict_id_zk[row["Название"]] = row["id_zk"]
 except:
@@ -33,7 +33,7 @@ except:
 
 # Создание столбца для основного файла
 def create_new_date(name):
-    global df_main,database
+    global df_main,database,dict_id_zk
     df = pd.read_csv(name, sep=';', encoding='cp1251')
     df = df.astype(object).replace({'—': np.nan, '-': np.nan})
     df.iloc[:, 4:] = df.iloc[:, 4:].apply(pd.to_numeric)
@@ -60,25 +60,25 @@ def create_new_date(name):
         df = df.astype(object)
         grouped = df.copy()
     elif indicate == 2:
+        df = df.rename(columns={
+            'id': 'id_house',
+        })
         if database.empty:
-            df = df.rename(columns={
-                'id': 'id_house',
-            })
             create_bd_id(df)
+
         df_main=df.copy()
         dif =database.groupby("id_zk").agg({
             'id_house': lambda x: sorted(list(x)),
             "Название":"first"
         }).reset_index().sort_values("id_zk")
-        print(dif["id_house"])
-        df1 = df_main[["id", "Название", "Средневз. стоимость квартиры, руб.", "Площадь, кв.м.",
+        df1 = df_main[["id_house", "Название", "Средневз. стоимость квартиры, руб.", "Площадь, кв.м.",
                        "Количество проданных, кв.м."]]
-        df1 = df1.groupby("id").agg({
+        df1 = df1.groupby("id_house").agg({
             "Название":"first",
             "Площадь, кв.м.": "sum",
             "Средневз. стоимость квартиры, руб.": "sum",
             "Количество проданных, кв.м.": "sum"
-        }).reset_index().sort_values(["id"])
+        }).reset_index().sort_values(["id_house"])
         items = dif.to_dict('records')
         df1["id_house"] = np.nan
         df1["id_zk"]=np.nan
@@ -96,67 +96,47 @@ def create_new_date(name):
             if math.isnan(row["id_house"]):
                 df1.loc[index,"id_house"] = len(database)+count
                 count+=1
-        df_dict = df1.groupby("Название").agg({
-            "id_zk":"first",
-        }).reset_index().sort_values(["id_zk"])
-        for index,row in df_dict.iterrows():
-            if math.isnan(row["id_house"]):
-                df1.loc[index,"id_house"] = len(database)+count
-        count = 0
         df1 = df1.sort_values(["id_zk"])
+        for i in df1["Название"]:
+            if i not in dict_id_zk:
+                dict_id_zk[i] = len(dict_id_zk)
         for index,row in df1.iterrows():
-            if math.isnan(row["id_zk"]):
-                df1.loc[index,"id_zk"] = len(dif)+count
-                count+=1
-        print(df1)
-        df1.drop("id", axis='columns', inplace=True)
+            df1.loc[index,"id_zk"] = dict_id_zk.get(row["Название"])
+        # df1.drop("id", axis='columns', inplace=True)
         create_bd_id(df1)
         result = df1.sort_values(["id_house"]).copy()
-        # dic = {}
-        # count = 0
-        # for i in df_main[]:
-        #     if i not in dic:
-        #         dic[i] = count
-        #         count += 1
-        # df_main["id_"] = [dic.get(i) for i in df_main[lst_col[-1]]]
-        # create_id_col_table(["id_zk","Название"])
-        # df1 = df_main[["id","Название","id_zk","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
-        #                "Количество проданных, кв.м."]]
-        # df2 = df_main[["id_zk","Название","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
-        #                "Количество проданных, кв.м."]]
-        # df1 = df1.groupby("id").agg({
-        #     "Название":"first",
-        #     "id_zk":"first",
-        #     "Площадь, кв.м.": "sum",
-        #     "Средневз. стоимость квартиры, руб.": "sum",
-        #     "Количество проданных, кв.м.": "sum"
-        # }).reset_index().sort_values(["id","id_zk"])
-        # df2 = df2.groupby("Название").agg({
-        #     "id_zk":"first",
-        #     "Площадь, кв.м.": "sum",
-        #     "Средневз. стоимость квартиры, руб.": "sum",
-        #     "Количество проданных, кв.м.": "sum"
-        # }).reset_index().sort_values("id_zk")
-        # df1["Средневз. цена, руб."]=df1["Средневз. стоимость квартиры, руб."]/df1["Площадь, кв.м."]
-        # df2["Средневз. цена, руб."]=df2["Средневз. стоимость квартиры, руб."]/df2["Площадь, кв.м."]
-
-        # df_house = df[["id_house","id_zk","Название","Холдинг","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
-        #           "Количество проданных, кв.м."]].sort_values(["id_house","id_zk"])
-        # grouped=df_house.copy()
-        # print(grouped)
-        # df_ZK = df[["id_zk","Холдинг","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
-        #           "Количество проданных, кв.м."]]
-        # df2=df2.astype(object).replace({'—': np.nan, '-': np.nan})
-        # df1 = df1.astype(object).replace({'—': np.nan, '-': np.nan})
-        # df1.iloc[:, 2:] = df1.iloc[:, 2:].apply(pd.to_numeric)
-        # df1= df1.groupby("Название").agg(lambda x:set(x)).reset_index()
+        create_id_col_table(["id_zk","Название"])
+        df1 = df_main[["id_house","Название","id_zk","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
+                       "Количество проданных, кв.м."]]
+        df2 = df_main[["id_zk","Название","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
+                       "Количество проданных, кв.м."]]
+        df1 = df1.groupby("id_house").agg({
+            "Название":"first",
+            "id_zk":"first",
+            "Площадь, кв.м.": "sum",
+            "Средневз. стоимость квартиры, руб.": "sum",
+            "Количество проданных, кв.м.": "sum"
+        }).reset_index().sort_values(["id_house","id_zk"])
+        df2 = df2.groupby("Название").agg({
+            "id_zk":"first",
+            "Площадь, кв.м.": "sum",
+            "Средневз. стоимость квартиры, руб.": "sum",
+            "Количество проданных, кв.м.": "sum"
+        }).reset_index().sort_values("id_zk")
+        df1["Средневз. цена, руб."]=df1["Средневз. стоимость квартиры, руб."]/df1["Площадь, кв.м."]
+        df2["Средневз. цена, руб."]=df2["Средневз. стоимость квартиры, руб."]/df2["Площадь, кв.м."]
         # for index,row in df.iterrows():
         #     print(df["id_ZK"].iloc[index])
         #     df["id_ZK"].iloc[index]=dict_ZK.get(row[2])
-        # df1.to_csv("Дом" + name, index=False, sep=';', encoding='cp1251')
-        result.to_csv("1.csv", index=False, sep=';', encoding='cp1251')
+        try:
+            os.mkdir(name.split("/")[0] + "-House")
+            os.mkdir(name.split("/")[0] + "-ZK")
+        except:
+            pass
+        df1.to_csv(name.split("/")[0]+"-House/"+name.split("/")[-1], index=False, sep=';', encoding='cp1251')
+        df2.to_csv(name.split("/")[0]+"-ZK/"+name.split("/")[-1], index=False, sep=';', encoding='cp1251')
+        # result.to_csv("1.csv", index=False, sep=';', encoding='cp1251')
         grouped=result.copy()
-        print(grouped)
     return grouped
 
 #Создание БД с Id дома и жк
@@ -316,13 +296,15 @@ def pars_folder_csv(name):
                 df1 = create_new_date(name + "/" + file)
                 if indicate == 0:
                     check_columns(df1)
-                elif indicate==1:
+                elif indicate==1 or indicate==2:
                     df1.to_csv(name + "/" + file, index=False, sep=';', encoding='cp1251')
+
+
         else:
             df1 = create_new_date(name)
             if indicate == 0:
                 check_columns(df1)
-            elif indicate == 1:
+            elif indicate == 1 or indicate==2:
                 df1.to_csv(name, index=False, sep=';', encoding='cp1251')
             # elif indicate==2:
             #     df1.to_csv("Название"+name, index=False, sep=';', encoding='cp1251')
@@ -380,8 +362,16 @@ class MyPrompt(Cmd):
         indicate = 1
         pars_folder_csv(inp)
 
-    def help_cals_sold(self):
+    def help_calc_sold(self):
         print("Добавить в таблицу столбец Проданных кв. м.")
+
+    def do_bd_zk_house(self, inp):
+        global indicate
+        indicate = 2
+        pars_folder_csv(inp)
+
+    def help_bd_zk_house(self):
+        print("Разделяет файл на 2 базы данных для Домов и для ЖК")
 
     # def do_main_df(self, inp):
     #     global df_main
@@ -393,14 +383,14 @@ class MyPrompt(Cmd):
     def default(self, inp):
         pass
 
-def main():
-    global indicate
-    # indicate = 1
-    # pars_folder_csv("2020-07-11-data.csv")
-    indicate=2
-    pars_folder_csv("csv2")
+# def main():
+#     global indicate
+#     # indicate = 1
+#     # pars_folder_csv("2020-07-11-data.csv")
+#     indicate=2
+#     pars_folder_csv("csv2")
 
 
 if __name__ == '__main__':
-    # MyPrompt().cmdloop()
-    main()
+    MyPrompt().cmdloop()
+    # main()
