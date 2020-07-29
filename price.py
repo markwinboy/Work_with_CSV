@@ -5,7 +5,7 @@ import datetime
 import math
 from cmd import Cmd
 from dateutil.relativedelta import relativedelta
-
+# Константы
 columns = {
     'Название': 'name',
     'Тип квартир': 'type',
@@ -19,6 +19,7 @@ df_main = pd.DataFrame(columns=['Объект', 'Тип квартир'])
 indicate = 0
 lst_group_columns = ["Средневз. стоимость квартиры, руб.","Площадь, кв.м.","Количество проданных, кв.м."]
 dict_id_zk = {}
+new_house_zk = False
 try:
     database = pd.read_csv("bd.csv", sep=';', encoding='cp1251')
     db = database.groupby("Название").agg({
@@ -33,7 +34,7 @@ except:
 
 # Создание столбца для основного файла
 def create_new_date(name):
-    global df_main,database,dict_id_zk
+    global df_main,database,dict_id_zk,new_house_zk
     df = pd.read_csv(name, sep=';', encoding='cp1251')
     df = df.astype(object).replace({'—': np.nan, '-': np.nan})
     df.iloc[:, 4:] = df.iloc[:, 4:].apply(pd.to_numeric)
@@ -43,15 +44,16 @@ def create_new_date(name):
         df = df.rename(columns={
             'Название': 'Объект',
             'Цена за кв.м., руб./кв.м.': date,
-            "Количество в остатках, шт.": 'Остаток',
-            "Кол-во квартир по проектным декларациям, шт.": "Количество",
-            "Средневз. стоимость квартиры, руб.": "Среднее",
-            "Площадь, кв.м.": "Площадь"
+            # "Количество в остатках, шт.": 'Остаток',
+            # "Кол-во квартир по проектным декларациям, шт.": "Количество",
+            # "Средневз. стоимость квартиры, руб.": "Среднее",
+            # "Площадь, кв.м.": "Площадь"
         })
         df1 = df[['Объект', 'Тип квартир', date]]
         df1 = df1.astype(object).replace({0: np.nan, '—': np.nan, '-': np.nan})
         df1.iloc[:, 2] = pd.to_numeric(df1.iloc[:, 2])
         grouped = df1.groupby(['Объект', 'Тип квартир'], sort=False).mean()
+
     elif indicate == 1:
         # df = df.astype(object).replace({'—': np.nan, '-': np.nan})
         # df.iloc[:, 4:]=df.iloc[:, 4:].apply(pd.to_numeric)
@@ -59,26 +61,33 @@ def create_new_date(name):
                                   - df["Количество в остатках, шт."]) * df["Площадь, кв.м."]
         df = df.astype(object)
         grouped = df.copy()
+
     elif indicate == 2:
+        #создаем бд если она пустая
         df = df.rename(columns={
             'id': 'id_house',
         })
         if database.empty:
             create_bd_id(df)
 
+        #создаем таблцу с основным id_zk и списком id_house
+        df['Тип квартир'] = df['Тип квартир'].fillna("-")
         df_main=df.copy()
         dif =database.groupby("id_zk").agg({
             'id_house': lambda x: sorted(list(x)),
             "Название":"first"
         }).reset_index().sort_values("id_zk")
-        df1 = df_main[["id_house", "Название", "Средневз. стоимость квартиры, руб.", "Площадь, кв.м.",
+        #группируем таблицу по id_house чтобы проставить id по домам и жк
+        df1 = df_main[["id_house", "Название","Тип квартир", "Средневз. стоимость квартиры, руб.", "Площадь, кв.м.",
                        "Количество проданных, кв.м."]]
         df1 = df1.groupby("id_house").agg({
             "Название":"first",
+            "Тип квартир": lambda x:len(list(x)),
             "Площадь, кв.м.": "sum",
             "Средневз. стоимость квартиры, руб.": "sum",
             "Количество проданных, кв.м.": "sum"
         }).reset_index().sort_values(["id_house"])
+
         items = dif.to_dict('records')
         df1["id_house"] = np.nan
         df1["id_zk"]=np.nan
@@ -89,28 +98,74 @@ def create_new_date(name):
                     df1.loc[index,"id_house"] = item["id_house"][count]
                     count +=1
                 if row["Название"]==item["Название"]:
-                    df1.loc[index, "id_zk"] = item["id_zk"]
+                    row["id_zk"]= item["id_zk"]
+                # if len(item["id_house"])==count:
+                #     break
+
+        #в случае если появились новые дома или жк мы заполняем их новыми id
         df1 = df1.sort_values(["id_house"])
-        count = 0
+        count = 1
         for index,row in df1.iterrows():
             if math.isnan(row["id_house"]):
-                df1.loc[index,"id_house"] = len(database)+count
+                df1.loc[index,"id_house"] = database['id_house'].max()+count
                 count+=1
+                new_house_zk = True
         df1 = df1.sort_values(["id_zk"])
         for i in df1["Название"]:
             if i not in dict_id_zk:
+                print(i)
                 dict_id_zk[i] = len(dict_id_zk)
+                new_house_zk = True
         for index,row in df1.iterrows():
             df1.loc[index,"id_zk"] = dict_id_zk.get(row["Название"])
         # df1.drop("id", axis='columns', inplace=True)
-        create_bd_id(df1)
-        result = df1.sort_values(["id_house"]).copy()
+        #Если мы проранжировали все, то в случае если появились новые дома или жк нужно перезаполнить БД
+        if new_house_zk:
+            create_bd_id(df1)
+
+        #Далее мы разбиваем на две таблицы: Дома и ЖК
+
+        df1 = df1.sort_values(["id_house"])
+        items = df1.to_dict('records')
+
+        # count_row=0
+        # for item in items:
+        #     count = 0
+        #     while True:
+        #         try:
+        #             if df.loc[count_row, "Название"] == item["Название"] and len(item["Тип квартир"])>count:
+        #                 df.loc[count_row, "id_house"] = item["id_house"]
+        #                 count += 1
+        #                 count_row+=1
+        #             else:
+        #                 break
+        #         except KeyError as exc:
+        #             print(exc.__class__, exc)
+        #             break
+        print(df)
+        count=0
+        for index,row in df.iterrows():
+            print(item)
+            for item in items:
+                if row["Название"] == item["Название"] and item["Тип квартир"]>0:
+                    print(item["Название"],item["id_house"])
+                    print(index)
+                    df.loc[index,"id_house"] = item["id_house"]
+                    item["Тип квартир"]=item["Тип квартир"]-1
+                    if item["Тип квартир"]==0:
+                        items.remove(item)
+                    count += 1
+                    break
+                # else:
+                #     break
+        result = df.sort_values(["id_house"]).copy()
+        print(df)
         create_id_col_table(["id_zk","Название"])
-        df1 = df_main[["id_house","Название","id_zk","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
+        df0 = df1[["id_house","Название","id_zk","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
                        "Количество проданных, кв.м."]]
-        df2 = df_main[["id_zk","Название","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
+        df2 = df1[["id_zk","Название","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
                        "Количество проданных, кв.м."]]
-        df1 = df1.groupby("id_house").agg({
+        df0 = df0.groupby("id_house").agg({
             "Название":"first",
             "id_zk":"first",
             "Площадь, кв.м.": "sum",
@@ -123,7 +178,7 @@ def create_new_date(name):
             "Средневз. стоимость квартиры, руб.": "sum",
             "Количество проданных, кв.м.": "sum"
         }).reset_index().sort_values("id_zk")
-        df1["Средневз. цена, руб."]=df1["Средневз. стоимость квартиры, руб."]/df1["Площадь, кв.м."]
+        df0["Средневз. цена, руб."]=df0["Средневз. стоимость квартиры, руб."]/df0["Площадь, кв.м."]
         df2["Средневз. цена, руб."]=df2["Средневз. стоимость квартиры, руб."]/df2["Площадь, кв.м."]
         # for index,row in df.iterrows():
         #     print(df["id_ZK"].iloc[index])
@@ -133,7 +188,7 @@ def create_new_date(name):
             os.mkdir(name.split("/")[0] + "-ZK")
         except:
             pass
-        df1.to_csv(name.split("/")[0]+"-House/"+name.split("/")[-1], index=False, sep=';', encoding='cp1251')
+        df0.to_csv(name.split("/")[0]+"-House/"+name.split("/")[-1], index=False, sep=';', encoding='cp1251')
         df2.to_csv(name.split("/")[0]+"-ZK/"+name.split("/")[-1], index=False, sep=';', encoding='cp1251')
         # result.to_csv("1.csv", index=False, sep=';', encoding='cp1251')
         grouped=result.copy()
@@ -152,8 +207,15 @@ def create_bd_id(df):
         "Название": "first",
         "id_zk": "first",
 }).reset_index().sort_values(["id_house", "id_zk"])
-    df1.to_csv("bd.csv", index=False, sep=';', encoding='cp1251')
-    database = df1.copy()
+    if database.empty:
+        df1.to_csv("bd.csv", index=False, sep=';', encoding='cp1251')
+        database = df1.copy()
+    else:
+        df2 = pd.read_csv("bd.csv", sep=';', encoding='cp1251')
+        result = pd.merge(df2, df1, how='outer', on=["id_house", "Название", "id_zk"])
+        result = result.sort_values(["id_house"])
+        result.to_csv("bd.csv", index=False, sep=';', encoding='cp1251')
+        database = result.copy()
 
 def creat_df_id(lst_col):
     lst_col = ["id_house","id_zk", "Название"]
@@ -163,7 +225,7 @@ def creat_df_id(lst_col):
         lst_col[1:]: "first",
         lst_group_columns:"sum"
         # "Площадь, кв.м.": "sum",
-        # "Средневз. стоимость квартиры, руб.": "sum",
+        # "Средневз. стоимость квар9тиры, руб.": "sum",
         # "Количество проданных, кв.м.": "sum"
     }).reset_index().sort_values(["id_house", "id_zk"])
 
@@ -189,7 +251,7 @@ def check_columns(df):
     elif list(df)[-1] in lst_index:
         return ""
     else:
-        if isinstance(lst_index[-1], datetime.datetime):
+        if isinstance(lst_index[-1], datetime.datetime) and (list(df)[-1].month>lst_index[-1].month):
             if ((lst_index[-1].month - list(df)[-1].month) == -1) and ((lst_index[-1].year - list(df)[-1].year) == 0):
                 add_column_to_main(df)
                 # average_columns()
@@ -293,13 +355,16 @@ def pars_folder_csv(name):
             dirs = os.listdir(name)
             lst_csv = sorted(dirs, key=lambda x: str(x.split(".")[0]))
             for file in lst_csv:
-                df1 = create_new_date(name + "/" + file)
-                if indicate == 0:
-                    check_columns(df1)
-                elif indicate==1 or indicate==2:
-                    df1.to_csv(name + "/" + file, index=False, sep=';', encoding='cp1251')
-
-
+                if "ok" not in file:
+                    df1 = create_new_date(name + "/" + file)
+                    if indicate == 0:
+                        check_columns(df1)
+                    elif indicate==1:
+                        df1.to_csv(name + "/" + file, index=False, sep=';', encoding='cp1251')
+                    elif indicate==2:
+                        df1.to_csv(name + "/" + file.split(".")[0]+"-ok.csv", index=False, sep=';', encoding='cp1251')
+                        os.remove(name + "/" + file)
+                        # df1.to_csv(name + "/" + file, index=False, sep=';', encoding='cp1251')
         else:
             df1 = create_new_date(name)
             if indicate == 0:
@@ -313,7 +378,7 @@ def pars_folder_csv(name):
             write_to_excel(df_main, "База по ценам Декарт.xlsx")
     except FileNotFoundError:
         print("Указан несуществующий путь или не найден файл База по ценам Декарт.xlsx")
-    # except KeyError:
+    # except KeyError:#если ошибка не исправляеться то тогда закомитеть этот except и посмотреть на что прога указывает
     #     print("Возможно файл не соответствует стандарту")
     #     print("Проверьте, что столбцы разделяются ';', а столбец имеет такой формат 'Цена за кв.м., руб./кв.м.'")
 
@@ -372,6 +437,11 @@ class MyPrompt(Cmd):
 
     def help_bd_zk_house(self):
         print("Разделяет файл на 2 базы данных для Домов и для ЖК")
+
+    def do_run(self,inp):
+        self.do_add_csv('price_csv')
+        self.do_calc_sold('price_csv')
+        self.do_bd_zk_house('price_csv')
 
     # def do_main_df(self, inp):
     #     global df_main
