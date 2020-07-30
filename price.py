@@ -72,13 +72,13 @@ def create_new_date(name):
 
         #создаем таблцу с основным id_zk и списком id_house
         df['Тип квартир'] = df['Тип квартир'].fillna("-")
-        df_main=df.copy()
+        # df_main=df.copy()
         dif =database.groupby("id_zk").agg({
             'id_house': lambda x: sorted(list(x)),
             "Название":"first"
         }).reset_index().sort_values("id_zk")
         #группируем таблицу по id_house чтобы проставить id по домам и жк
-        df1 = df_main[["id_house", "Название","Тип квартир", "Средневз. стоимость квартиры, руб.", "Площадь, кв.м.",
+        df1 = df[["id_house", "Название","Тип квартир", "Средневз. стоимость квартиры, руб.", "Площадь, кв.м.",
                        "Количество проданных, кв.м."]]
         df1 = df1.groupby("id_house").agg({
             "Название":"first",
@@ -113,7 +113,6 @@ def create_new_date(name):
         df1 = df1.sort_values(["id_zk"])
         for i in df1["Название"]:
             if i not in dict_id_zk:
-                print(i)
                 dict_id_zk[i] = len(dict_id_zk)
                 new_house_zk = True
         for index,row in df1.iterrows():
@@ -142,14 +141,10 @@ def create_new_date(name):
         #         except KeyError as exc:
         #             print(exc.__class__, exc)
         #             break
-        print(df)
         count=0
         for index,row in df.iterrows():
-            print(item)
             for item in items:
                 if row["Название"] == item["Название"] and item["Тип квартир"]>0:
-                    print(item["Название"],item["id_house"])
-                    print(index)
                     df.loc[index,"id_house"] = item["id_house"]
                     item["Тип квартир"]=item["Тип квартир"]-1
                     if item["Тип квартир"]==0:
@@ -159,8 +154,7 @@ def create_new_date(name):
                 # else:
                 #     break
         result = df.sort_values(["id_house"]).copy()
-        print(df)
-        create_id_col_table(["id_zk","Название"])
+        df1 = create_id_col_table(df1,["id_zk","Название"])
         df0 = df1[["id_house","Название","id_zk","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
                        "Количество проданных, кв.м."]]
         df2 = df1[["id_zk","Название","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
@@ -196,13 +190,13 @@ def create_new_date(name):
 
 #Создание БД с Id дома и жк
 def create_bd_id(df):
-    global df_main,database
+    global database
     df = df.astype(object).replace({'—': np.nan, '-': np.nan})
     df.iloc[:, 4:] = df.iloc[:, 4:].apply(pd.to_numeric)
-    df_main = df.copy()
-    if "id_zk" not in df_main.columns.tolist():
-        create_id_col_table(["id_zk", "Название"])
-    df1 = df_main[["id_house", "Название", "id_zk"]]
+    # df_main = df.copy()
+    if "id_zk" not in df.columns.tolist():
+        df = create_id_col_table(df,["id_zk", "Название"])
+    df1 = df[["id_house", "Название", "id_zk"]]
     df1 = df1.groupby("id_house").agg({
         "Название": "first",
         "id_zk": "first",
@@ -229,15 +223,16 @@ def creat_df_id(lst_col):
         # "Количество проданных, кв.м.": "sum"
     }).reset_index().sort_values(["id_house", "id_zk"])
 
-def create_id_col_table(lst_col):
-    global df_main,dict_id_zk
+def create_id_col_table(df,lst_col):
+    global dict_id_zk
     dict_id_zk = {}
     count =0
-    for i in df_main[lst_col[-1]]:
+    for i in df[lst_col[-1]]:
         if i not in dict_id_zk:
             dict_id_zk[i] = count
             count += 1
-    df_main[lst_col[0]] = [dict_id_zk.get(i) for i in df_main[lst_col[-1]]]
+    df[lst_col[0]] = [dict_id_zk.get(i) for i in df[lst_col[-1]]]
+    return df
 
 def database_to_csv(df,name):
     df.to_csv(name, index=False, sep=';', encoding='cp1251')
@@ -443,6 +438,8 @@ class MyPrompt(Cmd):
         self.do_calc_sold('price_csv')
         self.do_bd_zk_house('price_csv')
 
+    def help_run(self):
+        print("Проходит все этапы добавление цен в общую таблицу до создания двух бд жк и дома")
     # def do_main_df(self, inp):
     #     global df_main
     #     work_pd_main(str(inp))
