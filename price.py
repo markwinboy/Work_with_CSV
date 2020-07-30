@@ -15,7 +15,11 @@ d = [{
     'Объект': None,
     'Тип квартир': None
 }]
+
+df_zk=pd.DataFrame(columns=["id_house",'Объект'])
+df_house=pd.DataFrame(columns=["id_zk",'Объект',])
 df_main = pd.DataFrame(columns=['Объект', 'Тип квартир'])
+
 indicate = 0
 lst_group_columns = ["Средневз. стоимость квартиры, руб.","Площадь, кв.м.","Количество проданных, кв.м."]
 dict_id_zk = {}
@@ -34,7 +38,7 @@ except:
 
 # Создание столбца для основного файла
 def create_new_date(name):
-    global df_main,database,dict_id_zk,new_house_zk
+    global df_main,database,dict_id_zk,new_house_zk,df_zk,df_house
     df = pd.read_csv(name, sep=';', encoding='cp1251')
     df = df.astype(object).replace({'—': np.nan, '-': np.nan})
     df.iloc[:, 4:] = df.iloc[:, 4:].apply(pd.to_numeric)
@@ -127,20 +131,6 @@ def create_new_date(name):
         df1 = df1.sort_values(["id_house"])
         items = df1.to_dict('records')
 
-        # count_row=0
-        # for item in items:
-        #     count = 0
-        #     while True:
-        #         try:
-        #             if df.loc[count_row, "Название"] == item["Название"] and len(item["Тип квартир"])>count:
-        #                 df.loc[count_row, "id_house"] = item["id_house"]
-        #                 count += 1
-        #                 count_row+=1
-        #             else:
-        #                 break
-        #         except KeyError as exc:
-        #             print(exc.__class__, exc)
-        #             break
         count=0
         for index,row in df.iterrows():
             for item in items:
@@ -154,7 +144,25 @@ def create_new_date(name):
                 # else:
                 #     break
         result = df.sort_values(["id_house"]).copy()
-        df1 = create_id_col_table(df1,["id_zk","Название"])
+        # print(df_main)
+        #
+        df = df.rename(columns={
+            'Название': 'Объект',
+            'Количество проданных, кв.м.': date,
+        })
+        df_col = df[["id_house", 'Объект', 'Тип квартир', date]]
+        df_col = df_col.astype(object).replace({'—': np.nan, '-': np.nan})
+        df_col['Тип квартир'] = df_col['Тип квартир'].fillna("-")
+
+        df_col.iloc[:, 3] = pd.to_numeric(df_col.iloc[:, 3])
+        # df_col["id_house"]=df_col["id_house"].astype(int)
+        if df_main.empty:
+            df_main = df_col.sort_values(["id_house"]).copy()
+        elif not df_main.empty:
+            add_column_to_bd_sell(df_col)
+
+        #####
+        # df1 = create_id_col_table(df1,["id_zk","Название"])
         df0 = df1[["id_house","Название","id_zk","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
                        "Количество проданных, кв.м."]]
         df2 = df1[["id_zk","Название","Средневз. стоимость квартиры, руб.","Площадь, кв.м.",
@@ -166,17 +174,41 @@ def create_new_date(name):
             "Средневз. стоимость квартиры, руб.": "sum",
             "Количество проданных, кв.м.": "sum"
         }).reset_index().sort_values(["id_house","id_zk"])
-        df2 = df2.groupby("Название").agg({
-            "id_zk":"first",
+
+        df2 = df2.groupby("id_zk").agg({
+            "Название":"first",
             "Площадь, кв.м.": "sum",
             "Средневз. стоимость квартиры, руб.": "sum",
             "Количество проданных, кв.м.": "sum"
         }).reset_index().sort_values("id_zk")
         df0["Средневз. цена, руб."]=df0["Средневз. стоимость квартиры, руб."]/df0["Площадь, кв.м."]
         df2["Средневз. цена, руб."]=df2["Средневз. стоимость квартиры, руб."]/df2["Площадь, кв.м."]
-        # for index,row in df.iterrows():
-        #     print(df["id_ZK"].iloc[index])
-        #     df["id_ZK"].iloc[index]=dict_ZK.get(row[2])
+
+        df2 = df2.rename(columns={
+            'Название': 'Объект',
+            'Количество проданных, кв.м.': date,
+        })
+        df_col2 = df2[["id_zk", 'Объект', date]]
+        df_col2 = df_col2.astype(object).replace({'—': np.nan, '-': np.nan})
+        df_col2.iloc[:, 2] = pd.to_numeric(df_col2.iloc[:,2])
+        # df_col["id_house"]=df_col["id_house"].astype(int)
+        if df_zk.empty:
+            df_zk = df_col2.sort_values(["id_zk"]).copy()
+        elif not df_zk.empty:
+            add_column_to_bd_zk(df_col2)
+
+        df0 = df0.rename(columns={
+            'Название': 'Объект',
+            'Количество проданных, кв.м.': date,
+        })
+        df_col1 = df0[["id_house", 'Объект', date]]
+        df_col1 = df_col1.astype(object).replace({'—': np.nan, '-': np.nan})
+        df_col1.iloc[:, 2] = pd.to_numeric(df_col1.iloc[:, 2])
+        # df_col["id_house"]=df_col["id_house"].astype(int)
+        if df_house.empty:
+            df_house = df_col1.sort_values(["id_house"]).copy()
+        elif not df_house.empty:
+            add_column_to_bd_house(df_col1)
         try:
             os.mkdir(name.split("/")[0] + "-House")
             os.mkdir(name.split("/")[0] + "-ZK")
@@ -239,14 +271,12 @@ def database_to_csv(df,name):
 
 # Проверка на
 def check_columns(df):
-    global df_main
+    global df_main,df_zk,df_house
     lst_index = list(df_main)
-    if df_main.empty:
-        df_main = df.copy()
-    elif list(df)[-1] in lst_index:
+    if list(df)[-1] in lst_index:
         return ""
     else:
-        if isinstance(lst_index[-1], datetime.datetime) and (list(df)[-1].month>lst_index[-1].month):
+        if isinstance(lst_index[-1], datetime.datetime) and (list(df)[-1].month>=lst_index[-1].month):
             if ((lst_index[-1].month - list(df)[-1].month) == -1) and ((lst_index[-1].year - list(df)[-1].year) == 0):
                 add_column_to_main(df)
                 # average_columns()
@@ -263,13 +293,64 @@ def check_columns(df):
 # усреднение значений по месячно
 def average_columns():
     global df_main
-    data = df_main.loc[:, :"Тип квартир"].copy()
-    df_main.drop(["Объект", "Тип квартир"], axis="columns", inplace=True)
-    df_main.columns = pd.Series(df_main.columns).apply(lambda x: x.to_period('M').to_timestamp())
-    df_main = df_main.groupby(df_main.columns, axis=1).mean()
-    is_nan(df_main)
+    if indicate==0:
+        data = df_main.loc[:, :"Тип квартир"].copy()
+        df_main.drop(["Объект", "Тип квартир"], axis="columns", inplace=True)
+        df_main.columns = pd.Series(df_main.columns).apply(lambda x: x.to_period('M').to_timestamp())
+        df_main = df_main.groupby(df_main.columns, axis=1).mean()
+        is_nan(df_main)
+    elif indicate==2:
+        data = df_main.loc[:, :"Тип квартир"].copy()
+        df_main.drop(["id_house","Объект", "Тип квартир"], axis="columns", inplace=True)
+        df_main.columns = pd.Series(df_main.columns).apply(lambda x: x.to_period('M').to_timestamp())
+        df_main = df_main.groupby(df_main.columns, axis=1).mean()
     df_main = data.join(df_main)
 
+#Усреднение значений помесячно только для дома и жк
+def average_columns_clone(df):
+    data = df.loc[:, :"Объект"].copy()
+    df.drop(df.columns.tolist()[:2], axis="columns", inplace=True)
+    df.columns = pd.Series(df.columns).apply(lambda x: x.to_period('M').to_timestamp())
+    df = df.groupby(df.columns, axis=1).mean()
+    df = data.join(df)
+    return df
+#Добавление в бд по ПРОДАЖАМ
+def add_column_to_bd_sell(df):
+    global df_main
+    # df=df.groupby(df.columns).reset_index().reindex(columns=df.columns)
+    items=df.to_dict('records')
+    # print(df_main[df_main["Объект"]=="25 ЛЕТ ОКТЯБРЯ 14.1"])
+    df_main[df.columns[-1]]=np.nan
+    col=df.columns.tolist()
+    # print(df_main)
+    for index, row in df_main.iterrows():
+        # print(row["Объект"],index)
+        for item in items:
+            if row["Объект"] == item["Объект"] and row["Тип квартир"] == item["Тип квартир"] and row["id_house"]==item["id_house"]:
+                df_main.loc[index, df.columns[-1]] = item[df.columns[-1]]
+                items.remove(item)
+                break
+    df = pd.DataFrame(items)
+    if not df.empty:
+        result = pd.merge(df_main, df, how='outer', on=col)
+        df_main = result.copy()
+    df_main=df_main.sort_values(["id_house"])
+    # write_to_excel(df_main, "База по продажам.xlsx")
+    # for item in items:
+    #     print(item)
+    #     df_main.loc[len(df_main),] = item
+
+#Добавление бд ЖК
+def add_column_to_bd_zk(df):
+    global df_zk
+    result = pd.merge(df_zk, df, how='outer', on=["id_zk",'Объект'])
+    df_zk = result.copy()
+
+#Добавление бд ДОМА
+def add_column_to_bd_house(df):
+    global df_house
+    result = pd.merge(df_house, df, how='outer', on=["id_house", 'Объект'])
+    df_house = result.copy()
 
 # Добавление столбца к основному
 def add_column_to_main(df):
@@ -292,10 +373,16 @@ def is_nan(df):
 
 # Работа с основной таблицей
 def work_pd_main():
-    global df_main
-    xl = pd.ExcelFile('База по ценам Декарт.xlsx')
-    df1 = xl.parse('Цены')
-    df_main = change_for_average(df1)
+    global df_main, df_zk, df_house
+    if indicate == 0:
+        xl = pd.ExcelFile('База по ценам Декарт.xlsx')
+        df1 = xl.parse('Цены')
+        df_main = change_for_average(df1)
+    elif indicate == 2:
+        xl = pd.ExcelFile('База по продажам.xlsx')
+        df1 = xl.parse('Продажи')
+        df_main = df1
+
 
 
 # Парсинг из excel в csv
@@ -335,22 +422,26 @@ def csv_to_excel(name):
 # Запись таблицы в Excel
 def write_to_excel(df, name):
     writer = pd.ExcelWriter(name)
-    df.to_excel(writer, 'Цены', index=False)
+    if indicate==0:
+        df.to_excel(writer, 'Цены', index=False)
+    elif indicate==2:
+        df.to_excel(writer, 'Продажи', index=False)
     writer.save()
 
 
 # Расчет проданных кв м
 # перебор файлов в папке
 def pars_folder_csv(name):
-    global df_main
+    global df_main,indicate,new_house_zk,df_zk,df_house
     try:
-        if indicate == 0:
+        if indicate == 0 or indicate == 2:
             work_pd_main()
         if len(name.split('.')) == 1:
             dirs = os.listdir(name)
             lst_csv = sorted(dirs, key=lambda x: str(x.split(".")[0]))
             for file in lst_csv:
                 if "ok" not in file:
+                    new_house_zk=False
                     df1 = create_new_date(name + "/" + file)
                     if indicate == 0:
                         check_columns(df1)
@@ -371,6 +462,15 @@ def pars_folder_csv(name):
         if indicate == 0:
             average_columns()
             write_to_excel(df_main, "База по ценам Декарт.xlsx")
+        elif indicate==2:
+            average_columns()
+            write_to_excel(df_main, "База по продажам.xlsx")
+            df_zk=average_columns_clone(df_zk)
+            write_to_excel(df_zk, "База по продажам ЖК.xlsx")
+            df_house = average_columns_clone(df_house)
+            write_to_excel(df_house, "База по продажам Дома.xlsx")
+
+
     except FileNotFoundError:
         print("Указан несуществующий путь или не найден файл База по ценам Декарт.xlsx")
     # except KeyError:#если ошибка не исправляеться то тогда закомитеть этот except и посмотреть на что прога указывает
@@ -380,7 +480,7 @@ def pars_folder_csv(name):
 
 # Замена значений NaN на средние значения
 def change_for_average(df):
-    df = df.astype(object).replace({0: np.nan, '—': np.nan, '-': np.nan})
+    df = df.astype(object).replace({'—': np.nan, '-': np.nan})
     df.iloc[:, 2:].apply(pd.to_numeric, errors='ignore')
     return df
 
