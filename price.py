@@ -54,7 +54,6 @@ def create_new_date(name):
             # "Площадь, кв.м.": "Площадь"
         })
         df1 = df[['Объект', 'Тип квартир', date]]
-        df1 = df1.astype(object).replace({0: np.nan, '—': np.nan, '-': np.nan})
         df1.iloc[:, 2] = pd.to_numeric(df1.iloc[:, 2])
         grouped = df1.groupby(['Объект', 'Тип квартир'], sort=False).mean()
 
@@ -141,11 +140,11 @@ def create_new_date(name):
                         items.remove(item)
                     count += 1
                     break
-                # else:
-                #     break
         result = df.sort_values(["id_house"]).copy()
         # print(df_main)
-        #
+
+        #ОТСЮДА НАЧИНАЙ
+        '''Надо кароче разобраться с общим заполнением в базы данных и посмотреть с ценной такую же дичь'''
         df = df.rename(columns={
             'Название': 'Объект',
             'Количество проданных, кв.м.': date,
@@ -314,6 +313,7 @@ def average_columns_clone(df):
     df = df.groupby(df.columns, axis=1).mean()
     df = data.join(df)
     return df
+
 #Добавление в бд по ПРОДАЖАМ
 def add_column_to_bd_sell(df):
     global df_main

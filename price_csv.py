@@ -36,6 +36,7 @@ base_name = {
 dict_id_zk = {}
 database=None
 df_sell = None
+df_type = None
 name = ""
 # new_house_zk = False
 for i in base_name:
@@ -89,8 +90,16 @@ def excel_to_csv(name):
         df1 = xl.parse('Цены')
         df1.to_csv(name.split('.')[0].split('/')[-1] + '.csv', index=False, sep=';', encoding='cp1251')
 
-def record_base_excel():
-    '''Запись в соответствующие файлы эксель'''
+def record_base_excel_quarter():
+    '''Запись в соответствующие поквартальные базы в эксель'''
+    for db in base_name:
+        # print(globals()[db])
+        df = average_quarter(globals()[db])
+        writer = pd.ExcelWriter(base_name[db].get("path"))
+        df.to_excel(writer, base_name[db].get("sheet"))
+        writer.save()
+def record_base_excel_month():
+    '''Запись в соответствующие помесячные базы в  эксель'''
     for db in base_name:
         # print(globals()[db])
         df = average_columns(globals()[db])
@@ -189,6 +198,32 @@ def is_nan(df):
                     row[count] = row[count - 1] + (row[-1] - row[count - 1]) / (len(row) - count + 1)
                 count += 1
 ####################################################################
+def fill_kvar_etap(df):
+#     global df_type
+#     df_type = df.groupby("Тип квартир").agg({
+#         "Площадь, кв.м.": "mean",
+# }).reset_index()
+#     print(df_type)
+    items = df_sell.to_dict('records')
+    for index,rows in df.iterrows():
+        for item in items:
+            if rows["id_house"]==item["id_house"] and (item["Этап"]=="Сдан. Продаж Нет" or item["Этап"]=="Строится. Продаж Нет"):
+                try:
+                    df.loc[index, "Количество проданных квартир, шт."] = rows["Кол-во квартир по проектным декларациям, шт."]
+                    df.loc[index,"Площадь проданных квартир, кв.м."] = \
+                        rows["Кол-во квартир по проектным декларациям, шт."]*df_type.loc[df_type["Тип квартир"]==rows["Тип квартир"]]["Площадь, кв.м."].values[0]
+                except:
+                    pass
+    return df
+
+def average_quarter(df_main):
+    df = df_main.set_index(['Навзвание', "Тип"])
+    new = df.T.reset_index()  # транспонируем матрицу, чтобы столбцы-даты стали строками
+    new['index'] = pd.PeriodIndex(new["index"], freq='Q')
+    new = new.groupby(['index']).mean()  # групперуем по этому столбцу и считаем среднее
+    df = new.T  # транспонируем обратно
+    return df
+
 def average_columns(df_main):
     df_name = verb_to_str(df_main)
     cols = base_name[df_name].get("list")
@@ -207,20 +242,37 @@ def create_bd_id(df):
     if "id_zk" not in df.columns.tolist():
         df = create_id_col_table(df,["id_zk", "Объект"])
     df1 = df[["id_house", "Объект", "id_zk","Долгота","Широта","Этап"]]
+#
 #     df1 = df1.groupby("id_house").agg({
 #         "Объект": "first",
 #         "id_zk": "first",
 # }).reset_index().sort_values(["id_house", "id_zk"])
     df1 = df1.sort_values(["id_house", "id_zk"])
     if database.empty:
-        df1.to_csv("bd.csv", index=False, sep=';', encoding='cp1251')
+        df1.to_csv("base/bd.csv", index=False, sep=';', encoding='cp1251')
         database = df1.copy()
     else:
         # df2 = pd.read_csv("bd.csv", sep=';', encoding='cp1251')
-        result = pd.merge(database, df1, how='outer', on=["id_house", "Объект", "id_zk"])
+        result = pd.merge(database, df1, how='outer', on=["id_house", "Объект", "id_zk","Долгота","Широта"],suffixes=('_x', ''))
+        cols = result.columns.tolist()
+        result = result.groupby("id_house").agg({
+        "Объект": "first",
+        "id_zk":"first",
+        "Долгота": "sum",
+        "Широта": "sum",
+        "Этап_x": "last",
+        "Этап":"first"
+    }).reset_index().sort_values(["id_house"])
+        for index,row in result.iterrows():
+            if row["Этап"]=="":
+                row["Этап"] = row["Этап_x"]
+        for i in cols:
+            if "x" in i:
+                result.drop(i, axis="columns", inplace=True)
         result = result.sort_values(["id_house"])
-        result.to_csv("bd.csv", index=False, sep=';', encoding='cp1251')
+        result.to_csv("base/bd.csv", index=False, sep=';', encoding='cp1251')
         database = result.copy()
+    print(database)
 
 def create_id_col_table(df,lst_col):
     global dict_id_zk
@@ -236,7 +288,6 @@ def create_id_col_table(df,lst_col):
 def database_open():
     '''Присваивание переменной database таблицу с id ЖК и Дома '''
     global dict_id_zk,database
-
     try:
         database = pd.read_csv("base/bd.csv", sep=';', encoding='cp1251')
         db = database.groupby("Объект").agg({
@@ -249,7 +300,7 @@ def database_open():
         database = pd.DataFrame(columns=["id", "Объект", "id_zk"])
 
 def assignment_id(df):
-    global database
+    global database,df_type
     '''Перебор всех строк и присваивание им id ЖК и Дома,
     если же появляются новые значения, то присваивается новый id
     и позже происходит запись в основную bd'''
@@ -262,11 +313,22 @@ def assignment_id(df):
     df = df.rename(columns={
         'id': 'id_house',
     })
+    # df_type = df.groupby("Тип квартир").agg({
+    #     "Площадь, кв.м.": "mean",
+    # }).reset_index()
+    # for index,row in df.iterrows():
+    #     if math.isnan(row["Площадь, кв.м."]):
+    #         try:
+    #             df.loc[index, "Площадь, кв.м."] = df_type.loc[df_type["Тип квартир"]==row["Тип квартир"]]["Площадь, кв.м."].values[0]
+    #         except:
+    #                 pass
+
     df['Тип квартир'] = df['Тип квартир'].fillna("-")
+    df.to_csv("her/" + name.split("/")[-1], index=False, sep=';', encoding='cp1251')
     df1 = df[["id_house", "Объект",
               "Тип квартир", "Средневз. стоимость квартиры, руб.",
-              "Площадь, кв.м.","Цена за кв.м., руб./кв.м.","Кол-во квартир по проектным декларациям, шт.","Количество проданных квартир, шт.",
-              "Площадь проданных квартир, кв.м."]]
+              "Площадь, кв.м.","Цена за кв.м., руб./кв.м.","Кол-во квартир по проектным декларациям, шт.",
+              "Количество в остатках, шт."]]
     df1 = df1.groupby("id_house").agg({
         "Объект": "first",
         "Тип квартир": lambda x: len(list(x)),
@@ -274,9 +336,11 @@ def assignment_id(df):
         "Площадь, кв.м.": "sum",
         "Цена за кв.м., руб./кв.м.": "mean",
         "Кол-во квартир по проектным декларациям, шт.":"sum",
-        "Количество проданных квартир, шт.":"sum",
-        "Площадь проданных квартир, кв.м.": "sum"
+        "Количество в остатках, шт.":"sum"
     }).reset_index().sort_values(["id_house"])
+    df1["Количество проданных квартир, шт."] = (df1["Кол-во квартир по проектным декларациям, шт."]
+                                               - df1["Количество в остатках, шт."])
+    df1["Площадь проданных квартир, кв.м."] = df1["Количество проданных квартир, шт."] * df1["Площадь, кв.м."]
     if database.empty:
         df1 = info_pars(df1,name)
         create_bd_id(df1)
@@ -284,7 +348,6 @@ def assignment_id(df):
         'id_house': lambda x: sorted(list(x)),
         "Объект": "first"
     }).reset_index().sort_values("id_zk")
-
     items = df_list_house.to_dict('records')
     df1["id_house"] = np.nan
     df1["id_zk"] = np.nan
@@ -310,8 +373,11 @@ def assignment_id(df):
             new_house_zk = True
     for index, row in df1.iterrows():
         df1.loc[index, "id_zk"] = dict_id_zk.get(row["Объект"])
+    # df1.to_csv(name.split("/")[0] +"-sell1/" + name.split("/")[-1], index=False, sep=';', encoding='cp1251')
+    # df1 = info_pars(df1, name)
+    df1.to_csv(name.split("/")[0] +"-sell2/" + name.split("/")[-1], index=False, sep=';', encoding='cp1251')
+    df1 = info_pars(df1, name)
     if new_house_zk:
-        df1 = info_pars(df1, name)
         create_bd_id(df1)
     return df1
 
@@ -332,6 +398,7 @@ def fill_df_main_price(df):
                     items.remove(item)
                 count += 1
                 break
+    df = fill_kvar_etap(df)
     return df.sort_values(["id_house"])
 
 def add_column_to_bd_sell(df_main,df):
@@ -351,6 +418,13 @@ def add_column_to_bd_sell(df_main,df):
         df_main = result.copy()
     df_main=df_main.sort_values(["id_house"])
     return df_main
+
+def write_to_folder(df,folder):
+    try:
+        os.mkdir(name.split("/")[0] + folder.split("/")[0])
+    except:
+        pass
+    df.to_csv(name.split("/")[0] + folder + name.split("/")[-1], index=False, sep=';', encoding='cp1251')
 
 def assignment_sell_zk_house(df_main,col):
     '''Создание бд ЖК и ДОМА'''
@@ -398,6 +472,11 @@ def iteration_df(df):
     df_house_sell = assignment_sell_zk_house(df_house_sell,"Площадь проданных квартир, кв.м.")
     df_zk_price = assignment_sell_zk_house(df_zk_price, "Цена за кв.м., руб./кв.м.")
     df_house_price = assignment_sell_zk_house(df_house_price, "Цена за кв.м., руб./кв.м.")
+    # write_to_folder(df_zk_sell,"ZK-sell/")
+    # write_to_folder(df_house_sell,"House-sell/")
+    # write_to_folder(df_zk_price,"ZK-price/")
+    # write_to_folder(df_house_price,"House-price/")
+
 
 def info_pars(df1,name):
     lst_name = name.split('.')[0].split('/')[-1].split("-")
@@ -410,6 +489,7 @@ def info_pars(df1,name):
     })
     df = df.astype(object).replace({'—': np.nan, '-': np.nan})
     df.loc[:, "Кол-во квартир (по проектным декларациям), шт."] = df.loc[:, "Кол-во квартир (по проектным декларациям), шт."].apply(pd.to_numeric)
+    df.iloc[:,1:2] =df.iloc[:,1:2].apply(pd.to_numeric)
     # df = df[["id_house","Объект","Кол-во квартир (по проектным декларациям), шт."]]
     df1 = df1.sort_values(["id_house"])
     df1["Этап"]=np.nan
@@ -417,15 +497,22 @@ def info_pars(df1,name):
     df1["Широта"] = np.nan
     # print(len(df_sell),len(df))
     items = df1.to_dict('records')
+    print(len(df1),len(df))
+    print(items)
     for index, row in df.iterrows():
         for item in items:
-            if row["Объект"] == item["Объект"] and row["Кол-во квартир (по проектным декларациям), шт."] == item["Кол-во квартир по проектным декларациям, шт."]:
+            #and row["Кол-во квартир (по проектным декларациям), шт."] == item["Кол-во квартир по проектным декларациям, шт."]
+            if row["Объект"] == item["Объект"]:
+                # print(item["Объект"], item["id_house"])
+                # print(index)
                 df.loc[index, "id_house"] = item["id_house"]
                 df1.loc[index,"Этап"] = row["Этап"]
                 df1.loc[index, "Долгота"] = row["Долгота"]
                 df1.loc[index, "Широта"] = row["Широта"]
                 items.remove(item)
                 break
+    print(items)
+    df = df.sort_values(["id_house"])
     df.to_csv("info_csv/"+name+".csv", index=False, sep=';', encoding='cp1251')
     return df1
 
@@ -461,13 +548,13 @@ def pars_folder_csv(path):
         if "ok" not in file:
             df_main = df_correct(name)
             df_sell = assignment_id(df_main)
-            info_pars(name)
+            # info_pars(name)
             df_main = fill_df_main_price(df_main)
             add_to_df_main_price(df_main)
             iteration_df(df_main)
             df_main.to_csv(path + "/" + file.split(".")[0] + "-ok.csv", index=False, sep=';', encoding='cp1251')
             os.remove(path + "/" + file)
-    record_base_excel()
+    record_base_excel_month()
             # df1 = create_new_date(name + "/" + file)
 
 
