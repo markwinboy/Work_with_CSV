@@ -1,11 +1,34 @@
-import pandas as pd
 import inspect
-import numpy as np
 import os
 import datetime
 import math
 from cmd import Cmd
 from dateutil.relativedelta import relativedelta
+import asyncio
+import random
+import ssl
+import time
+from functools import partial
+
+import aiohttp
+import httpx
+import numpy as np
+import pandas as pd
+import ujson as json
+import wrapt
+from async_lru import alru_cache
+from async_timeout import timeout
+from rosreestr2coord.utils import get_rosreestr_headers
+from tqdm import tqdm
+
+import proxies
+import warnings    # isort:skip
+warnings.filterwarnings("ignore")
+
+import nest_asyncio    # isort:skip
+nest_asyncio.apply() #
+
+from rosreestr4 import fetch
 
 date = None
 base_name = {
@@ -65,6 +88,7 @@ database = None
 df_sell = None
 df_type = None
 name = ""
+
 # new_house_zk = False
 for i in base_name:
     try:
@@ -74,11 +98,112 @@ for i in base_name:
             df1 = df1.astype(object).replace({'—': np.nan, '-': np.nan})
             df1.iloc[:, 2:] = df1.iloc[:, 2:].apply(pd.to_numeric, errors='ignore')
         globals()[i] = df1.copy()
-    except:
+    except FileNotFoundError:
         globals()[i] = pd.DataFrame(columns=base_name[i].get("col"))
 
+cached = partial(alru_cache, maxsize=None)
+GOOD_REQUESTS = 0
+BAD_REQUESTS = 0
+pbar = None
+
+queue = asyncio.Queue()
+with open('useragents.txt') as f:#открытие файла useragents
+    useragents = list(filter(None, f.read().split('\n')))#список
 
 ####################################################################
+@wrapt.decorator
+async def wrapper(func, inst, args, kwds):
+    global GOOD_REQUESTS, BAD_REQUESTS
+
+    while True:
+        async with proxies.get_proxy() as proxy:
+            try:
+                # kwds['proxy'] = proxy['proxy']
+                kwds['proxies'] = {'http': proxy['proxy'], 'https': proxy['proxy']}
+                start_time = time.time()
+                resp = await func(*args, **kwds)
+                proxy['time'] = time.time() - start_time
+                proxy['retries'] = 0
+                GOOD_REQUESTS += 1
+                return resp
+
+            except (AssertionError, TimeoutError, asyncio.TimeoutError, aiohttp.ClientHttpProxyError,
+                    aiohttp.ServerDisconnectedError, aiohttp.ClientOSError, aiohttp.ClientError, ConnectionResetError,
+                    ssl.SSLError, RuntimeError, httpx.HTTPError, httpx.ProxyError, httpx.NetworkError,
+                    httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ProtocolError) as exc:
+
+                proxy['retries'] += 1
+                BAD_REQUESTS += 1
+                print(exc.__class__, exc)
+                print(proxy)
+                exit()
+
+            finally:
+                if pbar:
+                    pbar.set_postfix_str(f'OK: {GOOD_REQUESTS}, BAD: {BAD_REQUESTS}')
+
+@wrapper
+async def fetch(params, **kwds):#функция для обработки ассинхронного запроса
+    headers = get_rosreestr_headers() #словарь данных росреестра для парсинга
+    headers['user-agent'] = random.choice(useragents) #
+    # headers['user-agent'] = 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.186     Safari/537.36'
+    params = {'headers': headers, **params}
+
+    async with timeout(65):
+        async with httpx.AsyncClient(**kwds, verify=False) as client:#работаем с ассинхронным запросом http
+            resp = await client.request(**params, timeout=60)#запрос
+            assert resp.status_code == 200, (resp.text, params)#если все норм то выводим
+            # resp.text = await resp.text()
+            return resp
+
+@cached()
+async def get_id_by_geolocation(coords, type):
+    while True:
+        try:
+            resp = await fetch({
+                'method': 'GET',
+                'url': f'https://pkk.rosreestr.ru/api/features/{type}',
+                'params': {
+                    '_': int(pd.Timestamp.now().timestamp() * 1000),
+                    'limit': 40,
+                    'skip': 0,
+                    'text': ' '.join(reversed(list(map(str.strip, coords.split(',')))))
+                }
+            })
+            # data = resp.json()
+            data = json.loads(resp.text)
+            if not data['features']:
+                return None
+
+            attrs = data['features'][0]['attrs']
+            return attrs['id']
+
+        except KeyboardInterrupt:
+            raise
+
+        except Exception as exc:
+            print(exc.__class__, exc)
+            await asyncio.sleep(10)
+
+@proxies.find_proxies
+async def cid_from_coords():
+    global pbar
+    data = pd.read_csv('base/bd.csv', sep=';', encoding='cp1251')  # создаем таблицу значений для файла input
+    data = data.astype(object).replace({np.nan: None})
+    items = data.to_dict('records')
+    count = 0
+    with tqdm(total=len(items)) as pbar:
+        pbar.set_description("Нахождение кодастрового номера")
+        for item in items:
+            if not item['Кодастр'] and item['Широта']:
+                count+=1
+                item['Кодастр'] = await get_id_by_geolocation(str(item["Долгота"])+","+str(item['Широта']), 1)
+            pbar.update(1)
+            if count>500:
+                break
+    df = pd.DataFrame(items)
+    df.to_csv('base/bd.csv', index=False, sep=';', encoding='cp1251')
+
 ####################################################################
 # Вспомогательные функции
 def verb_to_str(x):
@@ -128,13 +253,12 @@ def dinamics_sell(df_main, base):
     col = df_main.columns.tolist()
     df = df_main.iloc[:, :len(cols) + 1]
     for i in range(len(cols) + 1, len(col)):
-        df = df_main[col[i]] - df_main[col[i - 1]]
+        df[col[i]] = df_main[col[i]] - df_main[col[i - 1]]
     df.to_csv(path.split("/")[0] +"/"+ path.split("/")[-1].split(".")[0] + "-динамик.csv", index=False, sep=';', encoding='cp1251')
 
 def record_base_excel_quarter():
     '''Запись в соответствующие поквартальные базы в эксель'''
     for db in base_name_quarter:
-        # print(globals()[db])
         globals()[db] = average_quarter(globals()[db])
         if "sell" in db:
             dinamics_sell(globals()[db], base_name_quarter)
@@ -146,7 +270,6 @@ def record_base_excel_quarter():
 def record_base_excel_month():
     '''Запись в соответствующие помесячные базы в  эксель'''
     for db in base_name:
-        #
         globals()[db] = average_columns(globals()[db])
         if "sell" in db:
             dinamics_sell(globals()[db], base_name)
@@ -187,7 +310,7 @@ def check_columns(df):
     elif list(df)[-1] in lst_index:
         return ""
     else:
-        if isinstance(lst_index[-1], datetime.datetime) and (list(df)[-1].month >= lst_index[-1].month):
+        if isinstance(lst_index[-1], datetime.datetime)and (list(df)[-1].month>=lst_index[-1].month):
             if ((lst_index[-1].month - list(df)[-1].month) == -1) and ((lst_index[-1].year - list(df)[-1].year) == 0):
                 result = pd.merge(df_main_price, df, how='outer', on=base_name["df_main_price"].get("list"))
                 df_main_price = result.copy()
@@ -227,7 +350,6 @@ def add_to_df_main_price(df):
     '''Форматирование таблицы с ключевым столбцом ЦЕНА
     для дальнейшего добавления к основной df_main_price'''
     # df_file = df.copy()
-    global df_zk_price, df_house_price
     df = df.rename(columns={
         # 'Название': 'Объект',
         'Цена за кв.м., руб./кв.м.': date,
@@ -256,10 +378,10 @@ def fill_kvar_etap(df):
     df_type = df.groupby("Тип квартир").agg({
         "Площадь, кв.м.": "mean",
     }).reset_index()
-    print(df_type)
     df["id_zk"] = np.nan
     items = df_sell.to_dict('records')
     for index, rows in df.iterrows():
+        df.loc[index, "id_zk"] = database.loc[database["id_house"] == rows["id_house"]]["id_zk"].values[0]
         for item in items:
             if rows["id_house"] == item["id_house"] and (
                     item["Этап"] == "Сдан. Продаж Нет" or item["Этап"] == "Строится. Продаж Нет"):
@@ -274,8 +396,6 @@ def fill_kvar_etap(df):
                     df_type.loc[df_type["Тип квартир"] == rows["Тип квартир"]]["Площадь, кв.м."].values[0]
                 except:
                     pass
-            if rows["id_house"] == item["id_house"]:
-                df.loc[index, "id_zk"] = database.loc[database["id_house"] == rows["id_house"]]["id_zk"].values[0]
     return df
 
 
@@ -283,7 +403,6 @@ def average_quarter(df_main):
     df_name = verb_to_str(df_main)
     df = df_main.set_index(base_name_quarter[df_name].get("list"), append=True)
     new = df.T.reset_index()  # транспонируем матрицу, чтобы столбцы-даты стали строками
-    print(new)
     new['index'] = pd.PeriodIndex(new["index"], freq='Q')
     new = new.groupby(['index']).mean()  # групперуем по этому столбцу и считаем среднее
     df = new.T.reset_index()  # транспонируем обратно
@@ -298,7 +417,6 @@ def average_columns(df_main):
     df_main.drop(cols, axis="columns", inplace=True)
     df_main.columns = pd.Series(df_main.columns).apply(lambda x: x.to_period('M').to_timestamp())
     df_main = df_main.groupby(df_main.columns, axis=1).mean()
-    # print(df_name)
     if df_name == "df_main_price":
         is_nan(df_main)
     df_main = data.join(df_main)
@@ -330,19 +448,19 @@ def create_bd_id(df):
             "Долгота": "sum",
             "Широта": "sum",
             "Этап_x": "last",
-            "Этап": "first"
+            "Этап": "first",
+            "Кодастр":"first"
         }).reset_index().sort_values(["id_house"])
+        result["Этап"] = result["Этап"].fillna("-")
         for index, row in result.iterrows():
-            if row["Этап"] == "":
-                row["Этап"] = row["Этап_x"]
+            if row["Этап"] == "-":
+                result.loc[index,"Этап"] = row["Этап_x"]
         for i in cols:
             if "x" in i:
                 result.drop(i, axis="columns", inplace=True)
         result = result.sort_values(["id_house"])
         result.to_csv("base/bd.csv", index=False, sep=';', encoding='cp1251')
         database = result.copy()
-    print(database)
-
 
 def create_id_col_table(df, lst_col):
     global dict_id_zk
@@ -355,7 +473,6 @@ def create_id_col_table(df, lst_col):
     df[lst_col[0]] = [dict_id_zk.get(i) for i in df[lst_col[-1]]]
     return df
 
-
 def database_open():
     '''Присваивание переменной database таблицу с id ЖК и Дома '''
     global dict_id_zk, database
@@ -367,15 +484,15 @@ def database_open():
         for index, row in db.iterrows():
             if row["Объект"] not in dict_id_zk:
                 dict_id_zk[row["Объект"]] = row["id_zk"]
-    except:
+    except FileNotFoundError:
         database = pd.DataFrame(columns=["id", "Объект", "id_zk"])
 
 
 def assignment_id(df):
-    global database
     '''Перебор всех строк и присваивание им id ЖК и Дома,
-    если же появляются новые значения, то присваивается новый id
-    и позже происходит запись в основную bd'''
+        если же появляются новые значения, то присваивается новый id
+        и позже происходит запись в основную bd'''
+    global database
     new_house_zk = False
     # df["Количество проданных, кв.м."] = (df["Кол-во квартир по проектным декларациям, шт."]
     #                                      - df["Количество в остатках, шт."]) * df["Площадь, кв.м."]
@@ -596,23 +713,18 @@ def info_pars(df1, name):
     df1["Этап"] = np.nan
     df1["Долгота"] = np.nan
     df1["Широта"] = np.nan
-    # print(len(df_sell),len(df))
     items = df1.to_dict('records')
-    print(len(df1), len(df))
-    print(items)
     for index, row in df.iterrows():
         for item in items:
             # and row["Кол-во квартир (по проектным декларациям), шт."] == item["Кол-во квартир по проектным декларациям, шт."]
             if row["Объект"] == item["Объект"]:
-                # print(item["Объект"], item["id_house"])
-                # print(index)
                 df.loc[index, "id_house"] = item["id_house"]
                 df1.loc[index, "Этап"] = row["Этап"]
                 df1.loc[index, "Долгота"] = row["Долгота"]
                 df1.loc[index, "Широта"] = row["Широта"]
                 items.remove(item)
                 break
-    print(items)
+
     df = df.sort_values(["id_house"])
     df.to_csv("info_csv/" + name + ".csv", index=False, sep=';', encoding='cp1251')
     return df1
@@ -637,6 +749,10 @@ def df_correct(name):
     return df
 
 
+# def coords():
+#     loop = asyncio.get_event_loop()
+#     loop.run_until_complete(cid_from_coords())
+
 # Перебор файлов в папке
 def pars_folder_csv(path):
     '''Перебор файлов из входящей папки'''
@@ -650,7 +766,6 @@ def pars_folder_csv(path):
         if "ok" not in file:
             df_main = df_correct(name)
             df_sell = assignment_id(df_main)
-            # info_pars(name)
             df_main = fill_df_main_price(df_main)
             add_to_df_main_price(df_main)
             iteration_df(df_main)
@@ -658,6 +773,8 @@ def pars_folder_csv(path):
             os.remove(path + "/" + file)
     record_base_excel_month()
     record_base_excel_quarter()
+    print("Конец программы")
+    # coords()
 
     # df1 = create_new_date(name + "/" + file)
 
@@ -693,6 +810,13 @@ class MyPrompt(Cmd):
         print('''1)Добавить csv-файл или папку csv файлов к таблице цены Декарт/n
                 2) Добавить в таблицу столбец Проданных шт и кв. м.
                 3) Разделяет файл на 2 базы данных для Домов и для ЖК по ценам и продажам''')
+
+    def do_cid(self,inp):
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(cid_from_coords())
+
+    def help_cid(self):
+        print("Нахождение кодастрового номера по координатам")
 
     def default(self, inp):
         pass
