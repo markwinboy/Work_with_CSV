@@ -31,6 +31,40 @@ nest_asyncio.apply() #
 from rosreestr4 import fetch
 
 date = None
+df_type = {'1К': 42.5,
+           '1КА': 31.6,
+           '1КСП': 82.9,
+           '1С': 36.1,
+           '1СА': 28.4,
+           '1СП': 75.6,
+           '1ССП': 135.1,
+           '1ССПА': 26.0,
+           '2К': 64.1,
+           '2КА': 53.0,
+           '2КСП': 52.5,
+           '2С': 50.1,
+           '2СА': 46.1,
+           '2СП': 84.0,
+           '2ССП': np.nan,
+           '2ССПА': 41.5,
+           '3К': 89.6,
+           '3КСП': 97.9,
+           '3С': 76.4,
+           '3СА': 70.3,
+           '3СП': 100.2,
+           '3ССП': 89.1,
+           '4К': 108.7,
+           '4КСП': 112.1,
+           '4С': 103.6,
+           '4СА': 77.6,
+           '4СП': 127.7,
+           '5К': 116.4,
+           '5С': 145.4,
+           '6К': np.nan,
+           '6С': 220.0,
+           '7К': np.nan,
+           '7С': np.nan,
+           '9К': np.nan}
 base_name = {
     'df_main_price': {
         'path': 'base/База по ценам Декарт.xlsx',
@@ -86,7 +120,7 @@ base_name_quarter = {
 dict_id_zk = {}
 database = None
 df_sell = None
-df_type = None
+# df_type = None
 name = ""
 
 # new_house_zk = False
@@ -374,26 +408,35 @@ def is_nan(df):
 
 ####################################################################
 def fill_kvar_etap(df):
-    global df_type
-    df_type = df.groupby("Тип квартир").agg({
-        "Площадь, кв.м.": "mean",
-    }).reset_index()
+    # df_type = df.groupby("Тип квартир").agg({
+    #     "Площадь, кв.м.": "mean",
+    # }).reset_index()
+    print(df_type)
     df["id_zk"] = np.nan
     items = df_sell.to_dict('records')
     for index, rows in df.iterrows():
         df.loc[index, "id_zk"] = database.loc[database["id_house"] == rows["id_house"]]["id_zk"].values[0]
         for item in items:
-            if rows["id_house"] == item["id_house"] and (
-                    item["Этап"] == "Сдан. Продаж Нет" or item["Этап"] == "Строится. Продаж Нет"):
-                try:
+            if rows["id_house"] == item["id_house"]:
+                #and datetime.date.today().year+1>=item["Срок сдачи объекта"].year
+                if ("Сдан" in item["Этап"]) or (item["Этап"] == "Строится. Продажи Есть" ):
                     if math.isnan(rows["Количество в остатках, шт."]):
+                        # print("dddd")
                         df.loc[index, "Количество в остатках, шт."] = 0.0
-                    df.loc[index, "Площадь проданных квартир, кв.м."] = rows[
-                                                                            "Кол-во квартир по проектным декларациям, шт."] * \
-                                                                        df_type.loc[df_type["Тип квартир"] == rows[
-                                                                            "Тип квартир"]]["Площадь, кв.м."].values[0]
-                    df.loc[index, "Площадь, кв.м."] = \
-                    df_type.loc[df_type["Тип квартир"] == rows["Тип квартир"]]["Площадь, кв.м."].values[0]
+                elif item["Этап"] == "Строится. Продаж Нет" or item["Этап"] == "Проект. Продаж Нет":
+                    if math.isnan(rows["Количество в остатках, шт."]):
+                        df.loc[index, "Количество в остатках, шт."] = rows["Кол-во квартир по проектным декларациям, шт."]
+                try:
+                    # df.loc[index, "Площадь проданных квартир, кв.м."] = rows[
+                    #                                                         "Кол-во квартир по проектным декларациям, шт."] * \
+                    #                                                     df_type.loc[df_type["Тип квартир"] == rows[
+                    #                                                         "Тип квартир"]]["Площадь, кв.м."].values[0]
+                    # df.loc[index, "Площадь проданных квартир, кв.м."] = rows["Кол-во квартир по проектным декларациям, шт."]-\
+                    #                                                     *df_type[rows["Тип квартир"]]
+                    # df.loc[index, "Площадь, кв.м."] = \
+                    # df_type.loc[df_type["Тип квартир"] == rows["Тип квартир"]]["Площадь, кв.м."].values[0]
+                    df.loc[index, "Площадь, кв.м."] = df_type[rows["Тип квартир"]]
+
                 except:
                     pass
     return df
@@ -574,7 +617,6 @@ def assignment_id(df):
 def fill_df_main_price(df):
     '''Перезаполнение id изначальной таблицы'''
     global df_sell
-    # df1 = assignment_id(df)
     # iteration_df(df)
     df_sell = df_sell.sort_values(["id_house"])
     items = df_sell.to_dict('records')
@@ -713,18 +755,28 @@ def info_pars(df1, name):
     df1["Этап"] = np.nan
     df1["Долгота"] = np.nan
     df1["Широта"] = np.nan
+    df1["Срок сдачи объекта"] = np.nan
     items = df1.to_dict('records')
     for index, row in df.iterrows():
         for item in items:
-            # and row["Кол-во квартир (по проектным декларациям), шт."] == item["Кол-во квартир по проектным декларациям, шт."]
+            #
+            if row["Объект"] == item["Объект"] and row["Кол-во квартир (по проектным декларациям), шт."] == item["Кол-во квартир по проектным декларациям, шт."] :
+                df.loc[index, "id_house"] = item["id_house"]
+                df1.loc[index, "Этап"] = row["Этап"]
+                df1.loc[index, "Долгота"] = row["Долгота"]
+                df1.loc[index, "Широта"] = row["Широта"]
+                df1.loc[index, "Срок сдачи объекта"] = row["Срок сдачи объекта"]
+                items.remove(item)
+                break
             if row["Объект"] == item["Объект"]:
                 df.loc[index, "id_house"] = item["id_house"]
                 df1.loc[index, "Этап"] = row["Этап"]
                 df1.loc[index, "Долгота"] = row["Долгота"]
                 df1.loc[index, "Широта"] = row["Широта"]
+                df1.loc[index, "Срок сдачи объекта"] = row["Срок сдачи объекта"]
                 items.remove(item)
                 break
-
+    print(items)
     df = df.sort_values(["id_house"])
     df.to_csv("info_csv/" + name + ".csv", index=False, sep=';', encoding='cp1251')
     return df1
