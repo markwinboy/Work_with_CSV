@@ -829,7 +829,41 @@ def pars_folder_csv(path):
     # coords()
 
     # df1 = create_new_date(name + "/" + file)
-
+def file_correct():
+    global df_sell, name
+    dirs = os.listdir('price_csv')
+    lst_csv = sorted(dirs, key=lambda x: str(x.split(".")[0]))
+    for file in lst_csv:
+        lst_name = file.split('.')[0].split('/')[-1].split("-")
+        lst_name.remove("data")
+        lst_name = "-".join(lst_name)
+        df_info = pd.read_csv("info_csv/" + lst_name + ".csv", sep=';', encoding='cp1251')
+        df_price = pd.read_csv('price_csv/'+file, sep=';', encoding='cp1251')
+        df = df_price[df_price["Тип квартир"] == "-"]
+        df = df["id"].tolist()
+        for i in df:
+            df_info.drop(df_info[df_info["id"] == i].index, inplace=True)
+            df_price.drop(df_price[df_price["id"] == i].index, inplace=True)
+        df_price = df_price.replace({'—': None, '-': None})
+        df_price.iloc[:, 4:] = df_price.iloc[:, 4:].apply(pd.to_numeric)
+        df_info = df_info.replace({'—': None, '-': None})
+        df_info.iloc[:, 9] = df_info.iloc[:, 9].apply(pd.to_numeric)
+        for i in df_info["id"].tolist():
+            if df_info[df_info["id"] == i]["Кол-во квартир (по проектным декларациям), шт."].values[0] != sum(
+                    df_price[df_price["id"] == i]["Кол-во квартир по проектным декларациям, шт."].tolist()):
+                df_info.drop(df_info[df_info["id"] == i].index, inplace=True)
+                df_price.drop(df_price[df_price["id"] == i].index, inplace=True)
+        print(df_info)
+        df = df_price.groupby("id").agg({
+            "Кол-во квартир по проектным декларациям, шт.": "sum",
+        }).reset_index().sort_values("id")
+        df_info = df_info.reset_index()
+        df_info["id"] = df_info.index
+        for index, row in df_price.iterrows():
+            df_price.loc[index, "id"] = df_info[df_info["index"] == row["id"]]["id"].values[0]
+        df_info.drop(columns="index", inplace=True)
+        df_price.astype(object).to_csv('price_csv/'+file, index=False, sep=';', encoding='cp1251')
+        df_info.astype(object).to_csv("info_csv/" + lst_name + ".csv", index=False, sep=';', encoding='cp1251')
 
 # Класс команд для управления файлом
 class MyPrompt(Cmd):
@@ -869,6 +903,12 @@ class MyPrompt(Cmd):
 
     def help_cid(self):
         print("Нахождение кодастрового номера по координатам")
+
+    def do_correct(self,inp):
+        file_correct()
+
+    def help_correct(self):
+        print("Удаление не нужных строк в файле")
 
     def default(self, inp):
         pass
