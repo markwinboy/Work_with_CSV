@@ -411,19 +411,19 @@ def fill_kvar_etap(df):
     # df_type = df.groupby("Тип квартир").agg({
     #     "Площадь, кв.м.": "mean",
     # }).reset_index()
-    print(df_type)
+    # print(df_type)
     df["id_zk"] = np.nan
     items = df_sell.to_dict('records')
     for index, rows in df.iterrows():
         df.loc[index, "id_zk"] = database.loc[database["id_house"] == rows["id_house"]]["id_zk"].values[0]
         for item in items:
             if rows["id_house"] == item["id_house"]:
-                #and datetime.date.today().year+1>=item["Срок сдачи объекта"].year
-                if ("Сдан" in item["Этап"]) or (item["Этап"] == "Строится. Продажи Есть" ):
+                if ("Сдан" in item["Этап"]) or (item["Этап"] == "Строится. Продажи Есть" and datetime.date.today().year+1>=int(item["Срок сдачи объекта"].split(".")[-1])) \
+                        or (item["Этап"] == "Строится. Продаж Нет" and datetime.date.today().year+1>=int(item["Срок сдачи объекта"].split(".")[-1])):
                     if math.isnan(rows["Количество в остатках, шт."]):
-                        # print("dddd")
                         df.loc[index, "Количество в остатках, шт."] = 0.0
-                elif item["Этап"] == "Строится. Продаж Нет" or item["Этап"] == "Проект. Продаж Нет":
+                elif (item["Этап"] == "Строится. Продаж Нет" and datetime.date.today().year+1<int(item["Срок сдачи объекта"].split(".")[-1])) \
+                        or item["Этап"] == "Проект. Продаж Нет" or (item["Этап"] == "Строится. Продажи Есть" and datetime.date.today().year+1<int(item["Срок сдачи объекта"].split(".")[-1])):
                     if math.isnan(rows["Количество в остатках, шт."]):
                         df.loc[index, "Количество в остатках, шт."] = rows["Кол-во квартир по проектным декларациям, шт."]
                 try:
@@ -470,37 +470,45 @@ def create_bd_id(df):
     global database
     if "id_zk" not in df.columns.tolist():
         df = create_id_col_table(df, ["id_zk", "Объект"])
-    df1 = df[["id_house", "Объект", "id_zk", "Долгота", "Широта", "Этап"]]
+    df1 = df[["id_house", "Объект","id_zk", "Долгота", "Широта"]]
     #
     #     df1 = df1.groupby("id_house").agg({
     #         "Объект": "first",
     #         "id_zk": "first",
     # }).reset_index().sort_values(["id_house", "id_zk"])
+    # df1["Кодастр"] = np.nan
     df1 = df1.sort_values(["id_house", "id_zk"])
+    df1["Долгота"] = df1["Долгота"].round(6)
+    df1["Широта"] = df1["Широта"].round(6)
+
     if database.empty:
         df1.to_csv("base/bd.csv", index=False, sep=';', encoding='cp1251')
         database = df1.copy()
     else:
+        database["Долгота"] = database["Долгота"].round(6)
+        database["Широта"] = database["Широта"].round(6)
         # df2 = pd.read_csv("bd.csv", sep=';', encoding='cp1251')
         result = pd.merge(database, df1, how='outer', on=["id_house", "Объект", "id_zk", "Долгота", "Широта"],
                           suffixes=('_x', ''))
-        cols = result.columns.tolist()
-        result = result.groupby("id_house").agg({
+        result = result.groupby(["id_house"]).agg({
+            # "id_house":"first",
             "Объект": "first",
             "id_zk": "first",
-            "Долгота": "sum",
-            "Широта": "sum",
-            "Этап_x": "last",
-            "Этап": "first",
-            "Кодастр":"first"
+            # "Кол-во квартир по проектным декларациям, шт.":"last",
+            "Долгота": "first",
+            "Широта": "first",
+            # "Этап_x": "last",
+            # "Этап": "first",
+            # "Кодастр":"first"
         }).reset_index().sort_values(["id_house"])
-        result["Этап"] = result["Этап"].fillna("-")
-        for index, row in result.iterrows():
-            if row["Этап"] == "-":
-                result.loc[index,"Этап"] = row["Этап_x"]
-        for i in cols:
-            if "x" in i:
-                result.drop(i, axis="columns", inplace=True)
+        # cols = result.columns.tolist()
+        # result["Этап"] = result["Этап"].fillna("-")
+        # for index, row in result.iterrows():
+        #     if row["Этап"] == "-":
+        #         result.loc[index,"Этап"] = row["Этап_x"]
+        # for i in cols:
+        #     if "x" in i:
+        #         result.drop(i, axis="columns", inplace=True)
         result = result.sort_values(["id_house"])
         result.to_csv("base/bd.csv", index=False, sep=';', encoding='cp1251')
         database = result.copy()
@@ -521,6 +529,8 @@ def database_open():
     global dict_id_zk, database
     try:
         database = pd.read_csv("base/bd.csv", sep=';', encoding='cp1251')
+        database["Долгота"] = database["Долгота"].round(6)
+        database["Широта"] = database["Широта"].round(6)
         db = database.groupby("Объект").agg({
             "id_zk": "first"
         }).reset_index().sort_values(["id_zk"])
@@ -545,52 +555,64 @@ def assignment_id(df):
     df = df.rename(columns={
         'id': 'id_house',
     })
-    # df_type = df.groupby("Тип квартир").agg({
-    #     "Площадь, кв.м.": "mean",
+    # df1 = df.groupby("id_house").agg({
+    #     "Кол-во квартир по проектным декларациям, шт.": "sum",
+    #     "Средневз. стоимость квартиры, руб.": sum
     # }).reset_index()
-    # for index,row in df.iterrows():
-    #     if math.isnan(row["Площадь, кв.м."]):
-    #         try:
-    #             df.loc[index, "Площадь, кв.м."] = df_type.loc[df_type["Тип квартир"]==row["Тип квартир"]]["Площадь, кв.м."].values[0]
-    #         except:
-    #                 pass
+    # for index, row in df1.iterrows():
+    #     print(row["Средневз. стоимость квартиры, руб."])
+    #     df.loc[df[df["id_house"] == row["id_house"]].index, "count"] = \
+    #         df[df["id_house"] == row["id_house"]]["Кол-во квартир по проектным декларациям, шт."].values[0]
+    #     if row["Средневз. стоимость квартиры, руб."] == 0:
+    #         df.loc[df[df["id_house"] == row["id_house"]].index, "sell_boolean"] = "Продаж Нет"
+    #     else:
+    #         df.loc[df[df["id_house"] == row["id_house"]].index, "sell_boolean"] = "Продажи Есть"
 
-    df['Тип квартир'] = df['Тип квартир'].fillna("-")
-    # df.to_csv("her/" + name.split("/")[-1], index=False, sep=';', encoding='cp1251')
-    df1 = df[["id_house", "Объект",
-              "Тип квартир", "Средневз. стоимость квартиры, руб.",
-              "Площадь, кв.м.", "Цена за кв.м., руб./кв.м.", "Кол-во квартир по проектным декларациям, шт.",
-              "Количество в остатках, шт."]]
-    df1 = df1.groupby("id_house").agg({
+    # df1 = df[["id_house", "Объект",
+    #           "Тип квартир", "Средневз. стоимость квартиры, руб.",
+    #           "Площадь, кв.м.", "Цена за кв.м., руб./кв.м.", "Кол-во квартир по проектным декларациям, шт.",
+    #           "Количество в остатках, шт."]]
+    df1 = df.groupby("id_house").agg({
         "Объект": "first",
         "Тип квартир": lambda x: len(list(x)),
         "Средневз. стоимость квартиры, руб.": "sum",
         "Площадь, кв.м.": "sum",
         "Цена за кв.м., руб./кв.м.": "mean",
         "Кол-во квартир по проектным декларациям, шт.": "sum",
-        "Количество в остатках, шт.": "sum"
+        "Количество в остатках, шт.": "sum",
+        "Долгота":"first",
+        "Широта":"first",
+        "count":"first",
     }).reset_index().sort_values(["id_house"])
-    # df1["Количество проданных квартир, шт."] = (df1["Кол-во квартир по проектным декларациям, шт."]
-    #                                            - df1["Количество в остатках, шт."])
-    # df1["Площадь проданных квартир, кв.м."] = df1["Количество проданных квартир, шт."] * df1["Площадь, кв.м."]
+    df1 = info_pars(df1, name)
     if database.empty:
-        df1 = info_pars(df1, name)
         create_bd_id(df1)
-    df_list_house = database.groupby("id_zk").agg({
-        'id_house': lambda x: sorted(list(x)),
-        "Объект": "first"
-    }).reset_index().sort_values("id_zk")
-    items = df_list_house.to_dict('records')
+    # df_list_house = database.groupby("id_zk").agg({
+    #     'id_house': lambda x: sorted(list(x)),
+    #     "Объект": "first"
+    # }).reset_index().sort_values("id_zk")
+    # items = df_list_house.to_dict('records')
+    items = database.to_dict("records")
     df1["id_house"] = np.nan
     df1["id_zk"] = np.nan
-    for item in items:
-        count = 0
-        for index, row in df1.iterrows():
-            if row["Объект"] == item["Объект"] and len(item["id_house"]) > count:
-                df1.loc[index, "id_house"] = item["id_house"][count]
-                count += 1
-            if row["Объект"] == item["Объект"]:
-                row["id_zk"] = item["id_zk"]
+    for index,row in df1.iterrows():
+        for item in items:
+            # and row["Кол-во квартир по проектным декларациям, шт."] == item[
+            #     "Кол-во квартир по проектным декларациям, шт."]
+            if row["Объект"] == item["Объект"] and round(row["Долгота"],6)==round(item["Долгота"],6) \
+                    and round(row["Широта"],6)==round(item["Широта"],6):
+                df1.loc[index, "id_house"] = item["id_house"]
+                df1.loc[index, "id_zk"] = item["id_zk"]
+                items.remove(item)
+                break
+    # for item in items:
+    #     count = 0
+    #     for index, row in df1.iterrows():
+    #         if row["Объект"] == item["Объект"] and len(item["id_house"]) > count:
+    #             df1.loc[index, "id_house"] = item["id_house"][count]
+    #             count += 1
+    #         if row["Объект"] == item["Объект"]:
+    #             df1.loc[index, "id_zk"] = item["id_zk"]
     df1 = df1.sort_values(["id_house"])
     count = 1
     for index, row in df1.iterrows():
@@ -623,7 +645,10 @@ def fill_df_main_price(df):
     count = 0
     for index, row in df.iterrows():
         for item in items:
-            if row["Объект"] == item["Объект"] and item["Тип квартир"] > 0:
+            # and row["Кол-во квартир по проектным декларациям, шт."] == item[
+                # "Кол-во квартир по проектным декларациям, шт."]
+            if row["Объект"] == item["Объект"] and round(row["Долгота"],6)==round(item["Долгота"],6) \
+                    and round(row["Широта"],6)==round(item["Широта"],6):
                 df.loc[index, "id_house"] = item["id_house"]
                 item["Тип квартир"] = item["Тип квартир"] - 1
                 if item["Тип квартир"] == 0:
@@ -749,33 +774,38 @@ def info_pars(df1, name):
     df.loc[:, "Кол-во квартир (по проектным декларациям), шт."] = df.loc[:,
                                                                   "Кол-во квартир (по проектным декларациям), шт."].apply(
         pd.to_numeric)
-    df.iloc[:, 1:2] = df.iloc[:, 1:2].apply(pd.to_numeric)
+    # df.iloc[:, 1:2] = df.iloc[:, 1:2].apply(pd.to_numeric)
     # df = df[["id_house","Объект","Кол-во квартир (по проектным декларациям), шт."]]
     df1 = df1.sort_values(["id_house"])
     df1["Этап"] = np.nan
-    df1["Долгота"] = np.nan
-    df1["Широта"] = np.nan
+    # df1["Долгота"] = np.nan
+    # df1["Широта"] = np.nan
     df1["Срок сдачи объекта"] = np.nan
     items = df1.to_dict('records')
+    # print(df.dtypes)
+    # print(df1.dtypes)
     for index, row in df.iterrows():
         for item in items:
-            #
-            if row["Объект"] == item["Объект"] and row["Кол-во квартир (по проектным декларациям), шт."] == item["Кол-во квартир по проектным декларациям, шт."] :
+            # row["Кол-во квартир (по проектным декларациям), шт."] == item[
+            #     "Кол-во квартир по проектным декларациям, шт."] \
+            # and
+            if row["Объект"] == item["Объект"] and \
+                    round(row["Долгота"],6)==round(item["Долгота"],6) and round(row["Широта"],6)==round(item["Широта"],6):
                 df.loc[index, "id_house"] = item["id_house"]
                 df1.loc[index, "Этап"] = row["Этап"]
-                df1.loc[index, "Долгота"] = row["Долгота"]
-                df1.loc[index, "Широта"] = row["Широта"]
+                # df1.loc[index, "Долгота"] = row["Долгота"]
+                # df1.loc[index, "Широта"] = row["Широта"]
                 df1.loc[index, "Срок сдачи объекта"] = row["Срок сдачи объекта"]
                 items.remove(item)
                 break
-            if row["Объект"] == item["Объект"]:
-                df.loc[index, "id_house"] = item["id_house"]
-                df1.loc[index, "Этап"] = row["Этап"]
-                df1.loc[index, "Долгота"] = row["Долгота"]
-                df1.loc[index, "Широта"] = row["Широта"]
-                df1.loc[index, "Срок сдачи объекта"] = row["Срок сдачи объекта"]
-                items.remove(item)
-                break
+            # if row["Объект"] == item["Объект"]:
+            #     df.loc[index, "id_house"] = item["id_house"]
+            #     df1.loc[index, "Этап"] = row["Этап"]
+            #     df1.loc[index, "Долгота"] = row["Долгота"]
+            #     df1.loc[index, "Широта"] = row["Широта"]
+            #     df1.loc[index, "Срок сдачи объекта"] = row["Срок сдачи объекта"]
+            #     items.remove(item)
+            #     break
     print(items)
     df = df.sort_values(["id_house"])
     df.to_csv("info_csv/" + name + ".csv", index=False, sep=';', encoding='cp1251')
@@ -797,7 +827,7 @@ def df_correct(name):
         'Название': 'Объект'
     })
     df = df.astype(object).replace({'—': np.nan, '-': np.nan})
-    df.iloc[:, 4:] = df.iloc[:, 4:].apply(pd.to_numeric)
+    df.iloc[:, 4:10] = df.iloc[:, 4:10].apply(pd.to_numeric)
     return df
 
 
@@ -862,6 +892,22 @@ def file_correct():
         for index, row in df_price.iterrows():
             df_price.loc[index, "id"] = df_info[df_info["index"] == row["id"]]["id"].values[0]
         df_info.drop(columns="index", inplace=True)
+        df = df_price.groupby("id").agg({
+            "Кол-во квартир по проектным декларациям, шт.": "sum",
+            "Средневз. стоимость квартиры, руб.": sum
+        }).reset_index()
+        df_price["Долгота"] = np.nan
+        df_price["Широта"] = np.nan
+        # print(df)
+        for index, row in df.iterrows():
+            df_price.loc[df_price[df_price["id"] == row["id"]].index, "count"] = \
+            df[df["id"] == row["id"]]["Кол-во квартир по проектным декларациям, шт."].values[0]
+            df_price.loc[df_price[df_price["id"] == row["id"]].index, "Долгота"] = round(df_info[df_info["id"] == row["id"]]["Долгота"].values[0],6)
+            df_price.loc[df_price[df_price["id"] == row["id"]].index, "Широта"] = round(df_info[df_info["id"] == row["id"]]["Широта"].values[0],6)
+            # if row["Средневз. стоимость квартиры, руб."] == 0:
+            #     df_price.loc[df_price[df_price["id"] == row["id"]].index, "sell_boolean"] = "Продаж Нет"
+            # else:
+            #     df_price.loc[df_price[df_price["id"] == row["id"]].index, "sell_boolean"] = "Продажи Есть"
         df_price.astype(object).to_csv('price_csv/'+file, index=False, sep=';', encoding='cp1251')
         df_info.astype(object).to_csv("info_csv/" + lst_name + ".csv", index=False, sep=';', encoding='cp1251')
 
